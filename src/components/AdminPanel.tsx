@@ -57,9 +57,210 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
     }
   };
 
+  const saveToSupabaseIndividualClient = async (data: any): Promise<boolean> => {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      // 1. site_settings (upsert single record)
+      await supabase.from('site_settings').upsert({
+        id: 1,
+        site_name: data.site_settings.site_name,
+        logo_url: data.site_settings.logo_url,
+        favicon_url: data.site_settings.favicon_url,
+        hero_title: data.site_settings.hero_title,
+        hero_subtitle: data.site_settings.hero_subtitle,
+        hero_cta_text: data.site_settings.hero_cta_text,
+        whatsapp_number: data.site_settings.whatsapp_number,
+        footer_text: data.site_settings.footer_text,
+        footer_address: data.site_settings.footer_address,
+        footer_email: data.site_settings.footer_email,
+        logo_display_mode: data.site_settings.logo_display_mode || 'both',
+        seo_description: data.site_settings.seo_description,
+        seo_keywords: data.site_settings.seo_keywords,
+        og_title: data.site_settings.og_title,
+        og_description: data.site_settings.og_description,
+        og_image_url: data.site_settings.og_image_url,
+        stat_projects_value: Number(data.site_settings.stat_projects_value || 0),
+        stat_projects_label: data.site_settings.stat_projects_label,
+        stat_clients_value: Number(data.site_settings.stat_clients_value || 0),
+        stat_clients_label: data.site_settings.stat_clients_label,
+        stat_experience_value: Number(data.site_settings.stat_experience_value || 0),
+        stat_experience_label: data.site_settings.stat_experience_label,
+        stat_success_value: Number(data.site_settings.stat_success_value || 0),
+        stat_success_label: data.site_settings.stat_success_label,
+        social_links: data.site_settings.social_links || {}
+      });
+
+      // 2. graphics_settings (upsert single record)
+      await supabase.from('graphics_settings').upsert({
+        id: 1,
+        view_all_link: data.graphics_settings?.view_all_link || 'https://behance.net'
+      });
+
+      // Helper to clear table and insert current collection
+      const syncTable = async (tableName: string, items: any[]) => {
+        try {
+          await supabase.from(tableName).delete().neq('id', 'dummy_id_to_clear_table');
+          if (items && items.length > 0) {
+            await supabase.from(tableName).insert(items);
+          }
+        } catch (e) {
+          console.error(`Client sync table failed: ${tableName}`, e);
+        }
+      };
+
+      await Promise.all([
+        syncTable('admin_users', data.admin_users || []),
+        syncTable('services', data.services || []),
+        syncTable('service_details', data.service_details || []),
+        syncTable('client_logos', data.client_logos || []),
+        syncTable('video_categories', data.video_categories || []),
+        syncTable('video_portfolio', data.video_portfolio || []),
+        syncTable('graphics_portfolio', data.graphics_portfolio || []),
+        syncTable('web_portfolio', data.web_portfolio || []),
+        syncTable('reviews', data.reviews || []),
+        syncTable('contact_submissions', data.contact_submissions || [])
+      ]);
+
+      return true;
+    } catch (err: any) {
+      console.error('Individual table client sync error:', err);
+      return false;
+    }
+  };
+
+  const syncFromSupabaseClient = async (): Promise<any | null> => {
+    if (!isSupabaseConfigured || !supabase) return null;
+
+    try {
+      const [
+        adminUsersRes,
+        siteSettingsRes,
+        servicesRes,
+        serviceDetailsRes,
+        clientLogosRes,
+        videoCategoriesRes,
+        videoPortfolioRes,
+        graphicsPortfolioRes,
+        graphicsSettingsRes,
+        webPortfolioRes,
+        reviewsRes,
+        contactSubmissionsRes
+      ] = await Promise.all([
+        supabase.from('admin_users').select('*'),
+        supabase.from('site_settings').select('*').eq('id', 1).maybeSingle(),
+        supabase.from('services').select('*'),
+        supabase.from('service_details').select('*'),
+        supabase.from('client_logos').select('*'),
+        supabase.from('video_categories').select('*'),
+        supabase.from('video_portfolio').select('*'),
+        supabase.from('graphics_portfolio').select('*'),
+        supabase.from('graphics_settings').select('*').eq('id', 1).maybeSingle(),
+        supabase.from('web_portfolio').select('*'),
+        supabase.from('reviews').select('*'),
+        supabase.from('contact_submissions').select('*')
+      ]);
+
+      const errors = [
+        adminUsersRes.error,
+        siteSettingsRes.error,
+        servicesRes.error,
+        serviceDetailsRes.error,
+        clientLogosRes.error,
+        videoCategoriesRes.error,
+        videoPortfolioRes.error,
+        graphicsPortfolioRes.error,
+        graphicsSettingsRes.error,
+        webPortfolioRes.error,
+        reviewsRes.error,
+        contactSubmissionsRes.error
+      ].filter(Boolean);
+
+      if (errors.length > 0) {
+        const hasTableMissing = errors.some(e => e?.code === 'PGRST114' || e?.message?.includes('does not exist'));
+        if (hasTableMissing) {
+          console.log('Individual tables are not fully created yet in Supabase. Falling back...');
+          return null;
+        }
+      }
+
+      const site_settings = siteSettingsRes.data;
+      const graphics_settings = graphicsSettingsRes.data;
+
+      if (!site_settings && (!servicesRes.data || servicesRes.data.length === 0)) {
+        console.log('Individual tables exist but are unseeded.');
+        return null;
+      }
+
+      const DEFAULT_SITE_SETTINGS = {
+        site_name: 'B2Bfiy Institute',
+        logo_url: '',
+        favicon_url: '',
+        hero_title: 'Unleash Your Brand Potential',
+        hero_subtitle: 'Premium Digital Agency',
+        hero_cta_text: 'Get Started',
+        whatsapp_number: '+8801700000000',
+        footer_text: '© 2026 B2Bfiy Institute.',
+        footer_address: 'Dhaka, Bangladesh',
+        footer_email: 'info@b2bfiy.com',
+        logo_display_mode: 'both',
+        social_links: {}
+      };
+
+      const loadedData = {
+        admin_users: adminUsersRes.data || [],
+        site_settings: site_settings ? {
+          ...site_settings,
+          social_links: typeof site_settings.social_links === 'string'
+            ? JSON.parse(site_settings.social_links)
+            : (site_settings.social_links || {})
+        } : DEFAULT_SITE_SETTINGS,
+        services: servicesRes.data || [],
+        service_details: serviceDetailsRes.data || [],
+        client_logos: clientLogosRes.data || [],
+        video_categories: videoCategoriesRes.data || [],
+        video_portfolio: videoPortfolioRes.data || [],
+        graphics_portfolio: graphicsPortfolioRes.data || [],
+        graphics_settings: graphics_settings || { view_all_link: 'https://behance.net' },
+        web_portfolio: webPortfolioRes.data || [],
+        reviews: reviewsRes.data || [],
+        contact_submissions: contactSubmissionsRes.data || [],
+      };
+
+      return loadedData;
+    } catch (err: any) {
+      console.warn('Error loading from individual Supabase tables on client:', err.message || err);
+      return null;
+    }
+  };
+
   const handlePushToSupabase = async () => {
     setIsSyncingPush(true);
     try {
+      if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+        const currentData = allData;
+        if (!currentData) {
+          showToast('পুশ করার মতো কোনো লোকাল ডাটা পাওয়া যায়নি।', 'error');
+          setIsSyncingPush(false);
+          return;
+        }
+
+        const successConfig = await saveToSupabaseDirect(currentData);
+        if (!successConfig) {
+          showToast('Supabase site_config টেবিলে ডাটা পুশ করতে ব্যর্থ হয়েছে।', 'error');
+          setIsSyncingPush(false);
+          return;
+        }
+
+        const successIndiv = await saveToSupabaseIndividualClient(currentData);
+        if (!successIndiv) {
+          showToast('সুপাবেস-এর অন্যান্য ইন্ডিভিজুয়াল টেবিলে ডাটা সেভ করতে ব্যর্থ হয়েছে (দয়া করে SQL স্ক্রিপ্ট রান করুন)।', 'error');
+        } else {
+          showToast('সরাসরি সফলভাবে Supabase Cloud-এ এবং ইন্ডিভিজুয়াল টেবিলসমূহহে ডাটা সেভ করা হয়েছে!');
+        }
+        setIsSyncingPush(false);
+        return;
+      }
+
       const response = await fetch('/api/admin/supabase/push', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
@@ -91,6 +292,47 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
     if (!confirm('সুপাবেস ক্লাউড থেকে ডাটা পুল করলে লোকাল ডাটা ওভাররাইট হয়ে যাবে। আপনি কি নিশ্চিত?')) return;
     setIsSyncingPull(true);
     try {
+      if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+        // First try to load from individual tables
+        const individualData = await syncFromSupabaseClient();
+        if (individualData) {
+          setAllData(individualData);
+          showToast('সরাসরি সফলভাবে Supabase ইন্ডিভিজুয়াল টেবিল থেকে লেটেস্ট ডাটা পুল করা হয়েছে!');
+          setIsSyncingPull(false);
+          return;
+        }
+
+        // Fallback to site_config
+        const { data, error } = await supabase!
+          .from('site_config')
+          .select('data')
+          .eq('id', 1)
+          .single();
+
+        if (error) {
+          if (error.code === 'PGRST116') {
+            showToast('সুপাবেস ক্লাউডে কোনো ডাটা খুঁজে পাওয়া যায়নি। প্রথমে Push Local Data চাপুন।', 'error');
+          } else {
+            showToast('সুপাবেস থেকে ডাটা পুল করতে ব্যর্থ হয়েছে: ' + error.message, 'error');
+          }
+          setIsSyncingPull(false);
+          return;
+        }
+
+        if (data && data.data) {
+          setAllData(data.data);
+          showToast('সরাসরি সফলভাবে Supabase site_config থেকে ডাটা পুল করা হয়েছে!');
+          // Sync to individual tables in background
+          saveToSupabaseIndividualClient(data.data).catch(() => {});
+          setIsSyncingPull(false);
+          return;
+        }
+
+        showToast('সুপাবেস থেকে অকার্যকর ডাটা পাওয়া গেছে।', 'error');
+        setIsSyncingPull(false);
+        return;
+      }
+
       const response = await fetch('/api/admin/supabase/pull', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
@@ -224,6 +466,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
     if (token === 'supabase-direct-token' || isSupabaseConfigured) {
       const success = await saveToSupabaseDirect(cloned);
       if (success) {
+        // Run individual tables sync in the background
+        saveToSupabaseIndividualClient(cloned).catch((err) => console.error('BG sync to individual tables failed:', err));
         setAllData(cloned);
         return true;
       }
