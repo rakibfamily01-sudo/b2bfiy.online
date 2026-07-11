@@ -1,0 +1,6 @@
+{
+  "name": "B2Bfiy Institute",
+  "description": "A modern, cinematic, high-end digital agency website with a fully dynamic Admin Panel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
