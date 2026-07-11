@@ -64,11 +64,21 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
-      const result = await response.json();
+      const contentType = response.headers.get('content-type');
       if (response.ok) {
-        showToast(result.message || 'ডাটা সফলভাবে Supabase-এ পুশ করা হয়েছে!');
+        if (contentType && contentType.includes('application/json')) {
+          const result = await response.json();
+          showToast(result.message || 'ডাটা সফলভাবে Supabase-এ পুশ করা হয়েছে!');
+        } else {
+          showToast('ডাটা সফলভাবে পুশ করা হয়েছে!');
+        }
       } else {
-        showToast(result.error || 'ডাটা পুশ করতে ব্যর্থ হয়েছে।', 'error');
+        if (contentType && contentType.includes('application/json')) {
+          const result = await response.json();
+          showToast(result.error || 'ডাটা পুশ করতে ব্যর্থ হয়েছে।', 'error');
+        } else {
+          showToast(`ডাটা পুশ করতে ব্যর্থ হয়েছে (Server error: ${response.status}).`, 'error');
+        }
       }
     } catch (err: any) {
       showToast('সংযোগ ব্যাহত হয়েছে।', 'error');
@@ -85,12 +95,22 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
-      const result = await response.json();
+      const contentType = response.headers.get('content-type');
       if (response.ok) {
-        showToast(result.message || 'ডাটা সফলভাবে Supabase থেকে পুল করা হয়েছে!');
+        if (contentType && contentType.includes('application/json')) {
+          const result = await response.json();
+          showToast(result.message || 'ডাটা সফলভাবে Supabase থেকে পুল করা হয়েছে!');
+        } else {
+          showToast('ডাটা সফলভাবে পুল করা হয়েছে!');
+        }
         fetchAdminData();
       } else {
-        showToast(result.error || 'ডাটা পুল করতে ব্যর্থ হয়েছে।', 'error');
+        if (contentType && contentType.includes('application/json')) {
+          const result = await response.json();
+          showToast(result.error || 'ডাটা পুল করতে ব্যর্থ হয়েছে।', 'error');
+        } else {
+          showToast(`ডাটা পুল করতে ব্যর্থ হয়েছে (Server error: ${response.status}).`, 'error');
+        }
       }
     } catch (err: any) {
       showToast('সংযোগ ব্যাহত হয়েছে।', 'error');
@@ -362,11 +382,27 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.size > 1024 * 1024) {
+      if (!confirm('This file is quite large. To avoid slowing down the database, we recommend images under 1MB. Do you want to proceed?')) {
+        return;
+      }
+    }
+
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = async () => {
+      const dataUrl = reader.result as string;
+
+      // If in Supabase Direct Mode, use the Base64 Data URL directly!
+      // This is 100% serverless, works on Vercel instantly with NO storage setup!
+      if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+        callback(dataUrl);
+        showToast('Image loaded successfully (will be saved in Cloud Database)!');
+        return;
+      }
+
       try {
-        const base64 = (reader.result as string).split(',')[1];
+        const base64 = dataUrl.split(',')[1];
         const response = await fetch('/api/admin/upload', {
           method: 'POST',
           headers: {
@@ -376,15 +412,25 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
           body: JSON.stringify({ name: file.name, data: base64 }),
         });
 
-        const result = await response.json();
         if (response.ok) {
-          callback(result.url);
-          showToast('File uploaded successfully!');
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const result = await response.json();
+            callback(result.url);
+            showToast('File uploaded successfully!');
+          } else {
+            callback(dataUrl);
+            showToast('Loaded as local image (server non-JSON).');
+          }
         } else {
-          throw new Error(result.error || 'Upload failed.');
+          // Fallback to data URL
+          callback(dataUrl);
+          showToast('Loaded as local image.');
         }
       } catch (err: any) {
-        showToast(err.message || 'Error uploading file.', 'error');
+        // Fallback to data URL
+        callback(dataUrl);
+        showToast('Loaded as local image!');
       }
     };
   };
@@ -407,7 +453,9 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       });
       if (success) {
         showToast('Site settings saved successfully!');
-        return;
+      }
+      if (token === 'supabase-direct-token') {
+        return; // Always stop here for Supabase Direct mode
       }
     }
 
@@ -425,7 +473,7 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         showToast('Site settings saved successfully!');
         fetchAdminData();
       } else {
-        throw new Error();
+        showToast('Failed to update settings.', 'error');
       }
     } catch (err) {
       showToast('Failed to update settings.', 'error');
@@ -466,6 +514,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (success) {
         showToast('Service saved successfully!');
         setEditingService(null);
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -484,6 +534,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         showToast('Service saved successfully!');
         setEditingService(null);
         fetchAdminData();
+      } else {
+        showToast('Failed to save service.', 'error');
       }
     } catch (err) {
       showToast('Failed to save service.', 'error');
@@ -500,6 +552,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       });
       if (success) {
         showToast('Service deleted successfully!');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -512,6 +566,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         showToast('Service deleted successfully!');
         fetchAdminData();
+      } else {
+        showToast('Could not delete service.', 'error');
       }
     } catch (err) {
       showToast('Could not delete service.', 'error');
@@ -549,6 +605,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (success) {
         showToast('Sub-task saved successfully!');
         setEditingSubtask(null);
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -566,6 +624,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         showToast('Sub-task saved successfully!');
         setEditingSubtask(null);
         fetchAdminData();
+      } else {
+        showToast('Failed to save sub-task.', 'error');
       }
     } catch (err) {
       showToast('Failed to save sub-task.', 'error');
@@ -581,6 +641,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       });
       if (success) {
         showToast('Sub-task deleted successfully!');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -593,6 +655,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         showToast('Sub-task deleted successfully!');
         fetchAdminData();
+      } else {
+        showToast('Delete failed.', 'error');
       }
     } catch (err) {
       showToast('Delete failed.', 'error');
@@ -629,6 +693,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (success) {
         showToast('Logo saved successfully!');
         setEditingLogo(null);
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -646,6 +712,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         showToast('Logo saved successfully!');
         setEditingLogo(null);
         fetchAdminData();
+      } else {
+        showToast('Failed to save logo.', 'error');
       }
     } catch (err) {
       showToast('Failed to save logo.', 'error');
@@ -661,6 +729,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       });
       if (success) {
         showToast('Logo deleted successfully!');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -673,6 +743,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         showToast('Logo deleted successfully!');
         fetchAdminData();
+      } else {
+        showToast('Delete failed.', 'error');
       }
     } catch (err) {
       showToast('Delete failed.', 'error');
@@ -711,6 +783,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (success) {
         showToast('Category saved successfully!');
         setEditingCategory(null);
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -728,6 +802,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         showToast('Category saved successfully!');
         setEditingCategory(null);
         fetchAdminData();
+      } else {
+        showToast('Failed to save category.', 'error');
       }
     } catch (err) {
       showToast('Failed to save category.', 'error');
@@ -744,6 +820,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       });
       if (success) {
         showToast('Category deleted successfully!');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -756,6 +834,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         showToast('Category deleted successfully!');
         fetchAdminData();
+      } else {
+        showToast('Delete failed.', 'error');
       }
     } catch (err) {
       showToast('Delete failed.', 'error');
@@ -795,6 +875,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (success) {
         showToast('Video portfolio saved successfully!');
         setEditingVideo(null);
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -812,6 +894,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         showToast('Video portfolio saved successfully!');
         setEditingVideo(null);
         fetchAdminData();
+      } else {
+        showToast('Failed to save video portfolio.', 'error');
       }
     } catch (err) {
       showToast('Failed to save video portfolio.', 'error');
@@ -827,6 +911,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       });
       if (success) {
         showToast('Video deleted successfully!');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -839,6 +925,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         showToast('Video deleted successfully!');
         fetchAdminData();
+      } else {
+        showToast('Delete failed.', 'error');
       }
     } catch (err) {
       showToast('Delete failed.', 'error');
@@ -866,6 +954,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       });
       if (success) {
         showToast('Graphics external link updated successfully!');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -882,6 +972,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         showToast('Graphics external link updated successfully!');
         fetchAdminData();
+      } else {
+        showToast('Failed to save link.', 'error');
       }
     } catch (err) {
       showToast('Failed to save link.', 'error');
@@ -916,6 +1008,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (success) {
         showToast('Graphics image saved successfully!');
         setEditingGraphics(null);
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -933,6 +1027,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         showToast('Graphics image saved successfully!');
         setEditingGraphics(null);
         fetchAdminData();
+      } else {
+        showToast('Failed to save graphics image.', 'error');
       }
     } catch (err) {
       showToast('Failed to save graphics image.', 'error');
@@ -948,6 +1044,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       });
       if (success) {
         showToast('Image deleted successfully!');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -960,6 +1058,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         showToast('Image deleted successfully!');
         fetchAdminData();
+      } else {
+        showToast('Delete failed.', 'error');
       }
     } catch (err) {
       showToast('Delete failed.', 'error');
@@ -997,6 +1097,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (success) {
         showToast('Web portfolio saved successfully!');
         setEditingWeb(null);
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -1014,6 +1116,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         showToast('Web portfolio saved successfully!');
         setEditingWeb(null);
         fetchAdminData();
+      } else {
+        showToast('Failed to save.', 'error');
       }
     } catch (err) {
       showToast('Failed to save.', 'error');
@@ -1029,6 +1133,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       });
       if (success) {
         showToast('Web project deleted successfully!');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -1041,6 +1147,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         showToast('Web project deleted successfully!');
         fetchAdminData();
+      } else {
+        showToast('Delete failed.', 'error');
       }
     } catch (err) {
       showToast('Delete failed.', 'error');
@@ -1078,6 +1186,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (success) {
         showToast('Review saved successfully!');
         setEditingReview(null);
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -1095,6 +1205,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         showToast('Review saved successfully!');
         setEditingReview(null);
         fetchAdminData();
+      } else {
+        showToast('Failed to save.', 'error');
       }
     } catch (err) {
       showToast('Failed to save.', 'error');
@@ -1110,6 +1222,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       });
       if (success) {
         showToast('Review deleted successfully!');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -1122,6 +1236,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         showToast('Review deleted successfully!');
         fetchAdminData();
+      } else {
+        showToast('Delete failed.', 'error');
       }
     } catch (err) {
       showToast('Delete failed.', 'error');
@@ -1132,13 +1248,16 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
   const handleToggleContactRead = async (id: string, is_read: boolean) => {
     if (token === 'supabase-direct-token' || isSupabaseConfigured) {
       const success = await updateAndSave((draft) => {
-        const item = (draft.contacts || []).find((c: any) => c.id === id);
+        if (!draft.contact_submissions) draft.contact_submissions = [];
+        const item = draft.contact_submissions.find((c: any) => c.id === id);
         if (item) {
           item.is_read = !is_read;
         }
       });
       if (success) {
         showToast('Status updated successfully.');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -1155,6 +1274,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         showToast('Status updated successfully.');
         fetchAdminData();
+      } else {
+        showToast('Update failed.', 'error');
       }
     } catch (err) {
       showToast('Update failed.', 'error');
@@ -1166,10 +1287,12 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
     if (token === 'supabase-direct-token' || isSupabaseConfigured) {
       const success = await updateAndSave((draft) => {
-        draft.contacts = (draft.contacts || []).filter((c: any) => c.id !== id);
+        draft.contact_submissions = (draft.contact_submissions || []).filter((c: any) => c.id !== id);
       });
       if (success) {
         showToast('Message deleted successfully!');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -1182,6 +1305,8 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         showToast('Message deleted successfully!');
         fetchAdminData();
+      } else {
+        showToast('Delete failed.', 'error');
       }
     } catch (err) {
       showToast('Delete failed.', 'error');
@@ -1201,14 +1326,21 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
     if (token === 'supabase-direct-token' || isSupabaseConfigured) {
       const hashedPassword = await hashPasswordClient(newPassword);
       const success = await updateAndSave((draft) => {
-        draft.admin = {
-          username: newUsername,
-          password: hashedPassword,
-        };
+        if (!draft.admin_users) {
+          draft.admin_users = [];
+        }
+        if (!draft.admin_users[0]) {
+          draft.admin_users[0] = { id: 'admin-1' };
+        }
+        draft.admin_users[0].username = newUsername;
+        draft.admin_users[0].password_hash = hashedPassword;
+        draft.admin_users[0].updated_at = new Date().toISOString();
       });
       if (success) {
         showToast('Security credentials updated successfully!');
         setNewPassword('');
+      }
+      if (token === 'supabase-direct-token') {
         return;
       }
     }
@@ -1227,8 +1359,13 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         setNewPassword('');
         fetchAdminData();
       } else {
-        const res = await response.json();
-        showToast(res.error || 'Failed to update credentials.', 'error');
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const res = await response.json();
+          showToast(res.error || 'Failed to update credentials.', 'error');
+        } else {
+          showToast(`Failed to update credentials (Server error: ${response.status}).`, 'error');
+        }
       }
     } catch (err) {
       showToast('Failed to save.', 'error');
