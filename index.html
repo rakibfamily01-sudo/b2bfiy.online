@@ -2,6 +2,23 @@
 <html lang="bn">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Suppress benign WebSocket or Vite HMR connection errors in the sandboxed preview environment
+      window.addEventListener('unhandledrejection', function (event) {
+        const reasonStr = event.reason ? String(event.reason.message || event.reason) : '';
+        if (reasonStr.toLowerCase().includes('websocket') || reasonStr.toLowerCase().includes('hmr')) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      });
+      window.addEventListener('error', function (event) {
+        const msgStr = event.message || '';
+        if (msgStr.toLowerCase().includes('websocket') || msgStr.toLowerCase().includes('hmr')) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>B2Bfiy Institute | Premium Digital Agency</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">

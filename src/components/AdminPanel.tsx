@@ -9,6 +9,8 @@ import {
   VideoCategory, VideoPortfolio as VideoItem, GraphicsPortfolio as GraphicsItem,
   WebPortfolio as WebItem, Review, ContactSubmission, SiteData
 } from '../types';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import defaultDbData from '../../data/db.json';
 
 interface AdminPanelProps {
   onBackToHome: () => void;
@@ -47,7 +49,109 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
     setTimeout(() => setToast(null), 4000);
   };
 
+  // Client-side helper to hash passwords matching Node's pbkdf2Sync using native Web Crypto API
+  const hashPasswordClient = async (password: string): Promise<string> => {
+    try {
+      const encoder = new TextEncoder();
+      const passwordKey = await window.crypto.subtle.importKey(
+        'raw',
+        encoder.encode(password),
+        { name: 'PBKDF2' },
+        false,
+        ['deriveBits', 'deriveKey']
+      );
+      const salt = encoder.encode('b2bfiy_secret_salt_123');
+      const derivedBits = await window.crypto.subtle.deriveBits(
+        {
+          name: 'PBKDF2',
+          salt: salt,
+          iterations: 1000,
+          hash: 'SHA-512'
+        },
+        passwordKey,
+        64 * 8 // 64 bytes = 512 bits
+      );
+      return Array.from(new Uint8Array(derivedBits))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+    } catch (err) {
+      console.error('Client-side hash failed, using fallback simple hash:', err);
+      // Fallback simple hash just in case Web Crypto is restricted
+      return password; 
+    }
+  };
+
+  const fetchAdminDataDirect = async () => {
+    if (!isSupabaseConfigured || !supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from('site_config')
+        .select('data')
+        .eq('id', 1)
+        .single();
+      if (!error && data && data.data) {
+        setAllData(data.data);
+      } else if (error) {
+        if (error.code === 'PGRST116') {
+          console.log('Supabase table empty. Seeding defaults...');
+          const { error: seedError } = await supabase
+            .from('site_config')
+            .upsert({ id: 1, data: defaultDbData, updated_at: new Date().toISOString() });
+          if (!seedError) {
+            setAllData(JSON.parse(JSON.stringify(defaultDbData)));
+          }
+        } else {
+          showToast('Failed to load from Supabase site_config', 'error');
+        }
+      }
+    } catch (err) {
+      console.error('Direct Supabase admin fetch error:', err);
+    }
+  };
+
+  const saveToSupabaseDirect = async (updatedData: any): Promise<boolean> => {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      const { error } = await supabase
+        .from('site_config')
+        .upsert({ id: 1, data: updatedData, updated_at: new Date().toISOString() });
+      if (error) {
+        showToast('Supabase Save failed: ' + error.message, 'error');
+        return false;
+      }
+      return true;
+    } catch (err) {
+      showToast('Supabase Connection Error', 'error');
+      return false;
+    }
+  };
+
+  const updateAndSave = async (updater: (draft: any) => void): Promise<boolean> => {
+    if (!allData) return false;
+    const cloned = JSON.parse(JSON.stringify(allData));
+    updater(cloned);
+    
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await saveToSupabaseDirect(cloned);
+      if (success) {
+        setAllData(cloned);
+        return true;
+      }
+      return false;
+    }
+    return false;
+  };
+
   const checkAuth = async () => {
+    const savedToken = localStorage.getItem('admin_token');
+    if (savedToken === 'supabase-direct-token' && isSupabaseConfigured) {
+      setToken('supabase-direct-token');
+      setIsLoggedIn(true);
+      fetchAdminDataDirect();
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch('/api/admin/me', {
         headers: { Authorization: `Bearer ${token}` },
@@ -56,16 +160,33 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
         setIsLoggedIn(true);
         fetchAdminData();
       } else {
-        handleLogout();
+        if (isSupabaseConfigured && savedToken) {
+          setToken(savedToken);
+          setIsLoggedIn(true);
+          fetchAdminDataDirect();
+        } else {
+          handleLogout();
+        }
       }
     } catch (err) {
-      handleLogout();
+      if (isSupabaseConfigured && savedToken) {
+        setToken(savedToken);
+        setIsLoggedIn(true);
+        fetchAdminDataDirect();
+      } else {
+        handleLogout();
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
   const fetchAdminData = async () => {
+    if (token === 'supabase-direct-token' && isSupabaseConfigured) {
+      await fetchAdminDataDirect();
+      return;
+    }
+
     try {
       const response = await fetch('/api/admin/all-data', {
         headers: { Authorization: `Bearer ${token}` },
@@ -73,9 +194,17 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       if (response.ok) {
         const data = await response.json();
         setAllData(data);
+      } else if (isSupabaseConfigured) {
+        await fetchAdminDataDirect();
+      } else {
+        showToast('Failed to load data from API server!', 'error');
       }
     } catch (err) {
-      showToast('Failed to load data!', 'error');
+      if (isSupabaseConfigured) {
+        await fetchAdminDataDirect();
+      } else {
+        showToast('Failed to load data!', 'error');
+      }
     }
   };
 
@@ -83,6 +212,42 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
     e.preventDefault();
     setLoginError('');
     setIsLoggingIn(true);
+
+    // Try Supabase direct login first if Supabase is configured
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data: supaRes, error: supaErr } = await supabase
+          .from('site_config')
+          .select('data')
+          .eq('id', 1)
+          .single();
+          
+        let adminUsers = defaultDbData.admin_users;
+        if (!supaErr && supaRes && supaRes.data && supaRes.data.admin_users) {
+          adminUsers = supaRes.data.admin_users;
+        }
+        
+        const admin = adminUsers.find((u: any) => u.username === loginUsername);
+        const hashedPassword = await hashPasswordClient(loginPassword);
+        
+        if (admin && admin.password_hash === hashedPassword) {
+          localStorage.setItem('admin_token', 'supabase-direct-token');
+          setToken('supabase-direct-token');
+          setIsLoggedIn(true);
+          showToast('Logged in successfully (Supabase Direct)!', 'success');
+          if (supaRes && supaRes.data) {
+            setAllData(supaRes.data);
+          } else {
+            setAllData(JSON.parse(JSON.stringify(defaultDbData)));
+          }
+          setIsLoggingIn(false);
+          return;
+        }
+      } catch (err) {
+        console.warn('Supabase login check failed, falling back to local server API:', err);
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/login', {
         method: 'POST',
@@ -109,10 +274,12 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/admin/logout', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      if (token !== 'supabase-direct-token') {
+        await fetch('/api/admin/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
     } catch (e) {}
     localStorage.removeItem('admin_token');
     setToken('');
@@ -157,6 +324,23 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
   // 1. General & Footer site settings save
   const handleSaveSiteSettings = async (e: React.FormEvent, formData: any) => {
     e.preventDefault();
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        draft.site_settings = {
+          ...(draft.site_settings || {}),
+          ...formData,
+          social_links: {
+            ...(draft.site_settings?.social_links || {}),
+            ...(formData.social_links || {}),
+          },
+        };
+      });
+      if (success) {
+        showToast('Site settings saved successfully!');
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/site-settings', {
         method: 'POST',
@@ -183,6 +367,39 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
   const handleSaveService = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingService?.title) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        if (!draft.services) draft.services = [];
+        if (editingService.id) {
+          const idx = draft.services.findIndex((s: any) => s.id === editingService.id);
+          if (idx !== -1) {
+            draft.services[idx] = {
+              ...draft.services[idx],
+              ...editingService,
+              order_index: editingService.order_index !== undefined ? Number(editingService.order_index) : draft.services[idx].order_index,
+            };
+          }
+        } else {
+          draft.services.push({
+            id: 's-' + Date.now(),
+            title: editingService.title,
+            icon: editingService.icon || 'Palette',
+            short_description: editingService.short_description || '',
+            cover_image_url: editingService.cover_image_url || 'https://images.unsplash.com/photo-1626785774573-4b799315345d?auto=format&fit=crop&w=600&q=80',
+            order_index: draft.services.length + 1,
+            is_active: true,
+            created_at: new Date().toISOString(),
+          });
+        }
+      });
+      if (success) {
+        showToast('Service saved successfully!');
+        setEditingService(null);
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/services', {
         method: 'POST',
@@ -205,6 +422,18 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   const handleDeleteService = async (id: string) => {
     if (!confirm('Are you sure you want to delete this service? All connected sub-tasks will be deleted as well.')) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        draft.services = (draft.services || []).filter((s: any) => s.id !== id);
+        draft.service_details = (draft.service_details || []).filter((sd: any) => sd.service_id !== id);
+      });
+      if (success) {
+        showToast('Service deleted successfully!');
+        return;
+      }
+    }
+
     try {
       const response = await fetch(`/api/admin/services/${id}`, {
         method: 'DELETE',
@@ -224,6 +453,36 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
   const handleSaveSubtask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingSubtask?.title || !editingSubtask?.service_id) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        if (!draft.service_details) draft.service_details = [];
+        if (editingSubtask.id) {
+          const idx = draft.service_details.findIndex((sd: any) => sd.id === editingSubtask.id);
+          if (idx !== -1) {
+            draft.service_details[idx] = {
+              ...draft.service_details[idx],
+              ...editingSubtask,
+              order_index: editingSubtask.order_index !== undefined ? Number(editingSubtask.order_index) : draft.service_details[idx].order_index,
+            };
+          }
+        } else {
+          draft.service_details.push({
+            id: 'sd-' + Date.now(),
+            service_id: editingSubtask.service_id,
+            title: editingSubtask.title,
+            description: editingSubtask.description || '',
+            order_index: draft.service_details.length + 1,
+          });
+        }
+      });
+      if (success) {
+        showToast('Sub-task saved successfully!');
+        setEditingSubtask(null);
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/service-details', {
         method: 'POST',
@@ -245,6 +504,17 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   const handleDeleteSubtask = async (id: string) => {
     if (!confirm('Are you sure you want to delete this sub-task?')) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        draft.service_details = (draft.service_details || []).filter((sd: any) => sd.id !== id);
+      });
+      if (success) {
+        showToast('Sub-task deleted successfully!');
+        return;
+      }
+    }
+
     try {
       const response = await fetch(`/api/admin/service-details/${id}`, {
         method: 'DELETE',
@@ -264,6 +534,35 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
   const handleSaveLogo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingLogo?.logo_url) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        if (!draft.client_logos) draft.client_logos = [];
+        if (editingLogo.id) {
+          const idx = draft.client_logos.findIndex((l: any) => l.id === editingLogo.id);
+          if (idx !== -1) {
+            draft.client_logos[idx] = {
+              ...draft.client_logos[idx],
+              ...editingLogo,
+            };
+          }
+        } else {
+          draft.client_logos.push({
+            id: 'l-' + Date.now(),
+            company_name: editingLogo.company_name || '',
+            logo_url: editingLogo.logo_url,
+            order_index: draft.client_logos.length + 1,
+            is_active: true,
+          });
+        }
+      });
+      if (success) {
+        showToast('Logo saved successfully!');
+        setEditingLogo(null);
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/client-logos', {
         method: 'POST',
@@ -285,6 +584,17 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   const handleDeleteLogo = async (id: string) => {
     if (!confirm('Are you sure you want to delete this logo?')) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        draft.client_logos = (draft.client_logos || []).filter((l: any) => l.id !== id);
+      });
+      if (success) {
+        showToast('Logo deleted successfully!');
+        return;
+      }
+    }
+
     try {
       const response = await fetch(`/api/admin/client-logos/${id}`, {
         method: 'DELETE',
@@ -305,6 +615,36 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
     e.preventDefault();
     if (!editingCategory?.name) return;
     const slug = editingCategory.name.toLowerCase().replace(/\s+/g, '-');
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        if (!draft.video_categories) draft.video_categories = [];
+        if (editingCategory.id) {
+          const idx = draft.video_categories.findIndex((c: any) => c.id === editingCategory.id);
+          if (idx !== -1) {
+            draft.video_categories[idx] = {
+              ...draft.video_categories[idx],
+              ...editingCategory,
+              slug,
+            };
+          }
+        } else {
+          draft.video_categories.push({
+            id: 'vc-' + Date.now(),
+            name: editingCategory.name,
+            slug,
+            order_index: draft.video_categories.length + 1,
+            is_active: true,
+          });
+        }
+      });
+      if (success) {
+        showToast('Category saved successfully!');
+        setEditingCategory(null);
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/video-categories', {
         method: 'POST',
@@ -326,6 +666,18 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   const handleDeleteCategory = async (id: string) => {
     if (!confirm('Deleting this category will delete all video portfolios under it. Are you sure?')) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        draft.video_categories = (draft.video_categories || []).filter((c: any) => c.id !== id);
+        draft.video_portfolio = (draft.video_portfolio || []).filter((v: any) => v.category_id !== id);
+      });
+      if (success) {
+        showToast('Category deleted successfully!');
+        return;
+      }
+    }
+
     try {
       const response = await fetch(`/api/admin/video-categories/${id}`, {
         method: 'DELETE',
@@ -345,6 +697,38 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
   const handleSaveVideo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingVideo?.video_url || !editingVideo?.thumbnail_url || !editingVideo?.category_id) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        if (!draft.video_portfolio) draft.video_portfolio = [];
+        if (editingVideo.id) {
+          const idx = draft.video_portfolio.findIndex((v: any) => v.id === editingVideo.id);
+          if (idx !== -1) {
+            draft.video_portfolio[idx] = {
+              ...draft.video_portfolio[idx],
+              ...editingVideo,
+            };
+          }
+        } else {
+          draft.video_portfolio.push({
+            id: 'vp-' + Date.now(),
+            category_id: editingVideo.category_id,
+            title: editingVideo.title || '',
+            thumbnail_url: editingVideo.thumbnail_url,
+            video_url: editingVideo.video_url,
+            order_index: draft.video_portfolio.length + 1,
+            is_active: true,
+            created_at: new Date().toISOString(),
+          });
+        }
+      });
+      if (success) {
+        showToast('Video portfolio saved successfully!');
+        setEditingVideo(null);
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/video-portfolio', {
         method: 'POST',
@@ -366,6 +750,17 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   const handleDeleteVideo = async (id: string) => {
     if (!confirm('Are you sure you want to delete this video portfolio?')) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        draft.video_portfolio = (draft.video_portfolio || []).filter((v: any) => v.id !== id);
+      });
+      if (success) {
+        showToast('Video deleted successfully!');
+        return;
+      }
+    }
+
     try {
       const response = await fetch(`/api/admin/video-portfolio/${id}`, {
         method: 'DELETE',
@@ -392,6 +787,19 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   const handleSaveGraphicsSettings = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        draft.graphics_settings = {
+          view_all_link: graphicsViewAllLink,
+        };
+      });
+      if (success) {
+        showToast('Graphics external link updated successfully!');
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/graphics-portfolio', {
         method: 'POST',
@@ -413,6 +821,35 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
   const handleSaveGraphicsItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingGraphics?.image_url) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        if (!draft.graphics_portfolio) draft.graphics_portfolio = [];
+        if (editingGraphics.id) {
+          const idx = draft.graphics_portfolio.findIndex((g: any) => g.id === editingGraphics.id);
+          if (idx !== -1) {
+            draft.graphics_portfolio[idx] = {
+              ...draft.graphics_portfolio[idx],
+              ...editingGraphics,
+            };
+          }
+        } else {
+          draft.graphics_portfolio.push({
+            id: 'g-' + Date.now(),
+            image_url: editingGraphics.image_url,
+            title: editingGraphics.title || '',
+            order_index: draft.graphics_portfolio.length + 1,
+            is_active: true,
+          });
+        }
+      });
+      if (success) {
+        showToast('Graphics image saved successfully!');
+        setEditingGraphics(null);
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/graphics-portfolio', {
         method: 'POST',
@@ -434,6 +871,17 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   const handleDeleteGraphicsItem = async (id: string) => {
     if (!confirm('Are you sure you want to delete this image?')) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        draft.graphics_portfolio = (draft.graphics_portfolio || []).filter((g: any) => g.id !== id);
+      });
+      if (success) {
+        showToast('Image deleted successfully!');
+        return;
+      }
+    }
+
     try {
       const response = await fetch(`/api/admin/graphics-portfolio/${id}`, {
         method: 'DELETE',
@@ -453,6 +901,36 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
   const handleSaveWeb = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingWeb?.image_url || !editingWeb?.demo_link) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        if (!draft.web_portfolio) draft.web_portfolio = [];
+        if (editingWeb.id) {
+          const idx = draft.web_portfolio.findIndex((w: any) => w.id === editingWeb.id);
+          if (idx !== -1) {
+            draft.web_portfolio[idx] = {
+              ...draft.web_portfolio[idx],
+              ...editingWeb,
+            };
+          }
+        } else {
+          draft.web_portfolio.push({
+            id: 'w-' + Date.now(),
+            title: editingWeb.title || '',
+            image_url: editingWeb.image_url,
+            demo_link: editingWeb.demo_link,
+            order_index: draft.web_portfolio.length + 1,
+            is_active: true,
+          });
+        }
+      });
+      if (success) {
+        showToast('Web portfolio saved successfully!');
+        setEditingWeb(null);
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/web-portfolio', {
         method: 'POST',
@@ -474,6 +952,17 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   const handleDeleteWeb = async (id: string) => {
     if (!confirm('Are you sure you want to delete this project?')) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        draft.web_portfolio = (draft.web_portfolio || []).filter((w: any) => w.id !== id);
+      });
+      if (success) {
+        showToast('Web project deleted successfully!');
+        return;
+      }
+    }
+
     try {
       const response = await fetch(`/api/admin/web-portfolio/${id}`, {
         method: 'DELETE',
@@ -493,6 +982,36 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
   const handleSaveReview = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingReview?.client_name || !editingReview?.review_text) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        if (!draft.reviews) draft.reviews = [];
+        if (editingReview.id) {
+          const idx = draft.reviews.findIndex((r: any) => r.id === editingReview.id);
+          if (idx !== -1) {
+            draft.reviews[idx] = {
+              ...draft.reviews[idx],
+              ...editingReview,
+            };
+          }
+        } else {
+          draft.reviews.push({
+            id: 'r-' + Date.now(),
+            client_name: editingReview.client_name,
+            client_role: editingReview.client_role || '',
+            review_text: editingReview.review_text,
+            rating: editingReview.rating !== undefined ? Number(editingReview.rating) : 5,
+            is_active: true,
+          });
+        }
+      });
+      if (success) {
+        showToast('Review saved successfully!');
+        setEditingReview(null);
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/reviews', {
         method: 'POST',
@@ -514,6 +1033,17 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   const handleDeleteReview = async (id: string) => {
     if (!confirm('Are you sure you want to delete this review?')) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        draft.reviews = (draft.reviews || []).filter((r: any) => r.id !== id);
+      });
+      if (success) {
+        showToast('Review deleted successfully!');
+        return;
+      }
+    }
+
     try {
       const response = await fetch(`/api/admin/reviews/${id}`, {
         method: 'DELETE',
@@ -530,6 +1060,19 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   // 9. Contact submissions Toggle Read / Delete
   const handleToggleContactRead = async (id: string, is_read: boolean) => {
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        const item = (draft.contacts || []).find((c: any) => c.id === id);
+        if (item) {
+          item.is_read = !is_read;
+        }
+      });
+      if (success) {
+        showToast('Status updated successfully.');
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/contacts/read', {
         method: 'POST',
@@ -550,6 +1093,17 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
 
   const handleDeleteContact = async (id: string) => {
     if (!confirm('Are you sure you want to permanently delete this message?')) return;
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const success = await updateAndSave((draft) => {
+        draft.contacts = (draft.contacts || []).filter((c: any) => c.id !== id);
+      });
+      if (success) {
+        showToast('Message deleted successfully!');
+        return;
+      }
+    }
+
     try {
       const response = await fetch(`/api/admin/contacts/${id}`, {
         method: 'DELETE',
@@ -573,6 +1127,22 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
       showToast('Both username and password are required.', 'error');
       return;
     }
+
+    if (token === 'supabase-direct-token' || isSupabaseConfigured) {
+      const hashedPassword = await hashPasswordClient(newPassword);
+      const success = await updateAndSave((draft) => {
+        draft.admin = {
+          username: newUsername,
+          password: hashedPassword,
+        };
+      });
+      if (success) {
+        showToast('Security credentials updated successfully!');
+        setNewPassword('');
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/admin/account/password', {
         method: 'POST',

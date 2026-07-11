@@ -1,10 +1,18 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { createClient } from '@supabase/supabase-js';
 
 const DB_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DB_DIR, 'db.json');
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+
+// Supabase environment variables support (checks both standard and Vite-prefixed names)
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+
+export const isSupabaseConfigured = !!(supabaseUrl && supabaseKey);
+export const supabase = isSupabaseConfigured ? createClient(supabaseUrl, supabaseKey) : null;
 
 // Ensure data and uploads directories exist
 if (!fs.existsSync(DB_DIR)) {
@@ -391,10 +399,32 @@ export class JSONDatabase {
     } catch (err) {
       console.error('Failed to write to database file:', err);
     }
+
+    // Save to Supabase asynchronously if configured
+    if (isSupabaseConfigured && supabase) {
+      (async () => {
+        try {
+          const { error } = await supabase
+            .from('site_config')
+            .upsert({ id: 1, data, updated_at: new Date().toISOString() });
+          if (error) {
+            console.error('Failed to save to Supabase site_config:', error.message);
+          } else {
+            console.log('Successfully saved database state to Supabase!');
+          }
+        } catch (err) {
+          console.error('Error in Supabase save:', err);
+        }
+      })();
+    }
   }
 
   public get(): DatabaseSchema {
     return this.schema;
+  }
+
+  public setRaw(data: DatabaseSchema) {
+    this.schema = data;
   }
 
   public update(updater: (data: DatabaseSchema) => void) {

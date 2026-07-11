@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Loader2, Shield } from 'lucide-react';
 import { SiteData } from './types';
+import { isSupabaseConfigured, supabase } from './lib/supabase';
+import defaultDbData from '../data/db.json';
 
 // Importing landing page sections
 import Header from './components/Header';
@@ -69,33 +71,150 @@ export default function App() {
   // Fetch all database site content dynamically from our API proxy
   useEffect(() => {
     const fetchSiteData = async () => {
+      let data: any = null;
+
+      // 1. Try local Express API first
       try {
         const response = await fetch('/api/site-data');
         if (response.ok) {
-          const data = await response.json();
-          setSiteData(data);
-          
-          // Set favicon dynamically
-          if (data.site_settings?.favicon_url) {
-            let link: HTMLLinkElement | null = document.querySelector("link[rel~='icon']");
-            if (!link) {
-              link = document.createElement('link');
-              link.rel = 'icon';
-              document.getElementsByTagName('head')[0].appendChild(link);
-            }
-            link.href = data.site_settings.favicon_url;
-          }
-          
-          // Set site title dynamically
-          if (data.site_settings?.site_name) {
-            document.title = `${data.site_settings.site_name} | Top Digital Agency`;
+          const fetched = await response.json();
+          if (fetched && fetched.site_settings) {
+            data = fetched;
+            console.log('Site data loaded successfully from local API.');
           }
         }
       } catch (err) {
-        console.error('Error fetching site data:', err);
-      } finally {
-        setIsLoading(false);
+        console.error('Local API fetch failed, trying Supabase...', err);
       }
+
+      // 2. Fallback to Supabase direct-fetch if API failed or returned empty
+      if (!data && isSupabaseConfigured && supabase) {
+        try {
+          console.log('Attempting direct Supabase query...');
+          const { data: dbRow, error } = await supabase
+            .from('site_config')
+            .select('data')
+            .eq('id', 1)
+            .single();
+
+          if (!error && dbRow && dbRow.data) {
+            const raw = dbRow.data;
+            const activeServices = (raw.services || [])
+              .filter((s: any) => s.is_active)
+              .sort((a: any, b: any) => a.order_index - b.order_index);
+              
+            const activeClientLogos = (raw.client_logos || [])
+              .filter((l: any) => l.is_active)
+              .sort((a: any, b: any) => a.order_index - b.order_index);
+              
+            const activeCategories = (raw.video_categories || [])
+              .filter((c: any) => c.is_active)
+              .sort((a: any, b: any) => a.order_index - b.order_index);
+              
+            const activeVideos = (raw.video_portfolio || [])
+              .filter((v: any) => v.is_active)
+              .sort((a: any, b: any) => a.order_index - b.order_index);
+              
+            const activeGraphics = (raw.graphics_portfolio || [])
+              .filter((g: any) => g.is_active)
+              .sort((a: any, b: any) => a.order_index - b.order_index);
+              
+            const activeWeb = (raw.web_portfolio || [])
+              .filter((w: any) => w.is_active)
+              .sort((a: any, b: any) => a.order_index - b.order_index);
+              
+            const activeReviews = (raw.reviews || [])
+              .filter((r: any) => r.is_active)
+              .sort((a: any, b: any) => a.order_index - b.order_index);
+
+            data = {
+              site_settings: raw.site_settings || {},
+              services: activeServices,
+              service_details: raw.service_details || [],
+              client_logos: activeClientLogos,
+              video_categories: activeCategories,
+              video_portfolio: activeVideos,
+              graphics_portfolio: activeGraphics,
+              graphics_settings: raw.graphics_settings || { view_all_link: 'https://behance.net' },
+              web_portfolio: activeWeb,
+              reviews: activeReviews,
+            };
+            console.log('Site data loaded successfully from Supabase directly!');
+          } else if (error) {
+            console.error('Supabase query failed:', error.message);
+          }
+        } catch (err) {
+          console.error('Supabase direct fetch failed:', err);
+        }
+      }
+
+      // 3. Absolute fallback to default local db.json seed so the app NEVER displays a crash page
+      if (!data) {
+        console.warn('Both API and Supabase direct fetching failed. Falling back to local db.json backup.');
+        const raw = defaultDbData as any;
+        const activeServices = (raw.services || [])
+          .filter((s: any) => s.is_active)
+          .sort((a: any, b: any) => a.order_index - b.order_index);
+          
+        const activeClientLogos = (raw.client_logos || [])
+          .filter((l: any) => l.is_active)
+          .sort((a: any, b: any) => a.order_index - b.order_index);
+          
+        const activeCategories = (raw.video_categories || [])
+          .filter((c: any) => c.is_active)
+          .sort((a: any, b: any) => a.order_index - b.order_index);
+          
+        const activeVideos = (raw.video_portfolio || [])
+          .filter((v: any) => v.is_active)
+          .sort((a: any, b: any) => a.order_index - b.order_index);
+          
+        const activeGraphics = (raw.graphics_portfolio || [])
+          .filter((g: any) => g.is_active)
+          .sort((a: any, b: any) => a.order_index - b.order_index);
+          
+        const activeWeb = (raw.web_portfolio || [])
+          .filter((w: any) => w.is_active)
+          .sort((a: any, b: any) => a.order_index - b.order_index);
+          
+        const activeReviews = (raw.reviews || [])
+          .filter((r: any) => r.is_active)
+          .sort((a: any, b: any) => a.order_index - b.order_index);
+
+        data = {
+          site_settings: raw.site_settings || {},
+          services: activeServices,
+          service_details: raw.service_details || [],
+          client_logos: activeClientLogos,
+          video_categories: activeCategories,
+          video_portfolio: activeVideos,
+          graphics_portfolio: activeGraphics,
+          graphics_settings: raw.graphics_settings || { view_all_link: 'https://behance.net' },
+          web_portfolio: activeWeb,
+          reviews: activeReviews,
+        };
+      }
+
+      if (data) {
+        setSiteData(data);
+        
+        // Set favicon dynamically
+        if (data.site_settings?.favicon_url) {
+          let link: HTMLLinkElement | null = document.querySelector("link[rel~='icon']");
+          if (!link) {
+            link = document.createElement('link');
+            link.rel = 'icon';
+            document.getElementsByTagName('head')[0].appendChild(link);
+          }
+          link.href = data.site_settings.favicon_url;
+        }
+        
+        // Set site title dynamically
+        if (data.site_settings?.site_name) {
+          document.title = `${data.site_settings.site_name} | Top Digital Agency`;
+        }
+      }
+
+      setIsLoading(false);
     };
 
     fetchSiteData();

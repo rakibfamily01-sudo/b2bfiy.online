@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
-import { db, hashPassword } from './server/db.ts';
+import { db, hashPassword, isSupabaseConfigured, supabase } from './server/db.ts';
 
 const app = express();
 const PORT = 3000;
@@ -18,6 +18,34 @@ if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 app.use('/uploads', express.static(UPLOADS_DIR));
+
+// Middleware to sync with Supabase on every request if configured (critical for serverless environments like Vercel)
+app.use(async (req, res, next) => {
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('site_config')
+        .select('data')
+        .eq('id', 1)
+        .single();
+      
+      if (!error && data && data.data) {
+        db.setRaw(data.data);
+      } else if (error) {
+        // If it's a row not found error (PGRST116), seed it with local data!
+        if (error.code === 'PGRST116') {
+          console.log('Row with id=1 not found. Seeding Supabase with default local data...');
+          await supabase.from('site_config').upsert({ id: 1, data: db.get() });
+        } else {
+          console.error('Supabase fetch error in middleware:', error.message);
+        }
+      }
+    } catch (err) {
+      console.error('Supabase middleware sync failed:', err);
+    }
+  }
+  next();
+});
 
 // In-memory active admin sessions to prevent cross-site iframe cookie blocking
 const activeSessions = new Map<string, { username: string; expiresAt: number }>();
