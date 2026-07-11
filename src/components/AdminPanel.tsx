@@ -35,6 +35,76 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
   // Status message
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  // Supabase Cloud Sync States
+  const [isSyncingPush, setIsSyncingPush] = useState(false);
+  const [isSyncingPull, setIsSyncingPull] = useState(false);
+  const [serverSupaConfigured, setServerSupaConfigured] = useState(false);
+  const [serverSupaUrl, setServerSupaUrl] = useState('');
+
+  const fetchSupabaseServerStatus = async () => {
+    if (!token || token === 'supabase-direct-token') return;
+    try {
+      const response = await fetch('/api/admin/supabase/status', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const res = await response.json();
+        setServerSupaConfigured(res.configured);
+        setServerSupaUrl(res.supabaseUrl);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch server-side Supabase status:', err);
+    }
+  };
+
+  const handlePushToSupabase = async () => {
+    setIsSyncingPush(true);
+    try {
+      const response = await fetch('/api/admin/supabase/push', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const result = await response.json();
+      if (response.ok) {
+        showToast(result.message || 'ডাটা সফলভাবে Supabase-এ পুশ করা হয়েছে!');
+      } else {
+        showToast(result.error || 'ডাটা পুশ করতে ব্যর্থ হয়েছে।', 'error');
+      }
+    } catch (err: any) {
+      showToast('সংযোগ ব্যাহত হয়েছে।', 'error');
+    } finally {
+      setIsSyncingPush(false);
+    }
+  };
+
+  const handlePullFromSupabase = async () => {
+    if (!confirm('সুপাবেস ক্লাউড থেকে ডাটা পুল করলে লোকাল ডাটা ওভাররাইট হয়ে যাবে। আপনি কি নিশ্চিত?')) return;
+    setIsSyncingPull(true);
+    try {
+      const response = await fetch('/api/admin/supabase/pull', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const result = await response.json();
+      if (response.ok) {
+        showToast(result.message || 'ডাটা সফলভাবে Supabase থেকে পুল করা হয়েছে!');
+        fetchAdminData();
+      } else {
+        showToast(result.error || 'ডাটা পুল করতে ব্যর্থ হয়েছে।', 'error');
+      }
+    } catch (err: any) {
+      showToast('সংযোগ ব্যাহত হয়েছে।', 'error');
+    } finally {
+      setIsSyncingPull(false);
+    }
+  };
+
+  useEffect(() => {
+    if (token && token !== 'supabase-direct-token') {
+      fetchSupabaseServerStatus();
+    }
+  }, [token]);
+
   // Verification & Authentication checking on load
   useEffect(() => {
     if (token) {
@@ -1394,6 +1464,58 @@ export default function AdminPanel({ onBackToHome }: AdminPanelProps) {
                   <h2 className="text-2xl font-display font-extrabold text-white">General Site Settings</h2>
                   <p className="text-gray-400 text-sm mt-1">Site name, logo, hero banner text, and contact configuration.</p>
                 </div>
+              </div>
+
+              {/* SUPABASE CLOUD DATABASE SYNC CONTROL PANEL */}
+              <div className="rounded-2xl border border-white/5 bg-gradient-to-br from-indigo-500/10 to-purple-500/5 p-6 space-y-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <h3 className="text-md font-bold text-white flex items-center gap-2">
+                      <div className={`w-2.5 h-2.5 rounded-full ${serverSupaConfigured || isSupabaseConfigured ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                      Supabase Cloud Database Sync
+                    </h3>
+                    <p className="text-gray-400 text-xs leading-relaxed">
+                      {serverSupaConfigured || isSupabaseConfigured 
+                        ? `Connected to Supabase project: ${serverSupaUrl || 'Direct Link'}` 
+                        : 'সুপাবেস ডাটাবেস এখনও সংযুক্ত নয়। ডাটা ক্লাউডে সেভ করতে .env ফাইলে credentials দিন।'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={isSyncingPush || !(serverSupaConfigured || isSupabaseConfigured)}
+                      onClick={handlePushToSupabase}
+                      className="px-4 py-2 text-xs font-mono font-bold rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      {isSyncingPush ? 'ডাটা পাঠানো হচ্ছে...' : 'Push Local Data (সুপাবেস-এ সেভ করুন)'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSyncingPull || !(serverSupaConfigured || isSupabaseConfigured)}
+                      onClick={handlePullFromSupabase}
+                      className="px-4 py-2 text-xs font-mono font-bold rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      {isSyncingPull ? 'ডাটা আনা হচ্ছে...' : 'Pull Cloud Data (সুপাবেস থেকে লোড করুন)'}
+                    </button>
+                  </div>
+                </div>
+
+                {!(serverSupaConfigured || isSupabaseConfigured) && (
+                  <div className="rounded-xl bg-black/40 border border-white/5 p-4 space-y-3">
+                    <p className="text-xs text-amber-300 leading-relaxed font-mono">
+                      ⚠️ Supabase is not connected yet! To persist your data permanently on Supabase, configure your deployment with the following environment variables:
+                    </p>
+                    <pre className="text-[10px] font-mono text-gray-400 bg-black/50 p-3 rounded border border-white/5 overflow-x-auto select-all">
+{`SUPABASE_URL="your-supabase-url"
+SUPABASE_KEY="your-supabase-service-role-key"
+VITE_SUPABASE_URL="your-supabase-url"
+VITE_SUPABASE_ANON_KEY="your-supabase-anon-key"`}
+                    </pre>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      এবং নিশ্চিত করুন যে আপনি Supabase SQL Editor-এ <code className="text-indigo-300 bg-white/5 px-1 py-0.5 rounded font-mono">supabase_setup.sql</code> ফাইলের কোডটি রান করেছেন।
+                    </p>
+                  </div>
+                )}
               </div>
 
               <form onSubmit={(e) => handleSaveSiteSettings(e, site_settings)} className="space-y-6 rounded-2xl glass-card border border-white/5 p-6 sm:p-8">

@@ -722,6 +722,67 @@ app.post('/api/admin/account/password', authenticate, (req, res) => {
   }
 });
 
+// ---------------- SUPABASE CLOUD DATABASE SYNC ENDPOINTS ----------------
+app.get('/api/admin/supabase/status', authenticate, (req, res) => {
+  res.json({
+    configured: isSupabaseConfigured,
+    supabaseUrl: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '',
+  });
+});
+
+app.post('/api/admin/supabase/push', authenticate, async (req, res) => {
+  if (!isSupabaseConfigured || !supabase) {
+    return res.status(400).json({ error: 'সুপাবেস সার্ভারে কনফিগার করা নেই। দয়া করে এনভায়রনমেন্ট ভেরিয়েবল চেক করুন।' });
+  }
+
+  try {
+    const currentData = db.get();
+    const { error } = await supabase
+      .from('site_config')
+      .upsert({ id: 1, data: currentData, updated_at: new Date().toISOString() });
+
+    if (error) {
+      return res.status(500).json({ error: 'Supabase-এ ডাটা পুশ করতে ব্যর্থ হয়েছে: ' + error.message });
+    }
+
+    res.json({ success: true, message: 'সরাসরি সফলভাবে Supabase Cloud-এ ডাটা পুশ করা হয়েছে!' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'ব্যতিক্রমী ত্রুটি: ' + err.message });
+  }
+});
+
+app.post('/api/admin/supabase/pull', authenticate, async (req, res) => {
+  if (!isSupabaseConfigured || !supabase) {
+    return res.status(400).json({ error: 'সুপাবেস সার্ভারে কনফিগার করা নেই। দয়া করে এনভায়রনমেন্ট ভেরিয়েবল চেক করুন।' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('site_config')
+      .select('data')
+      .eq('id', 1)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Supabase Cloud-এ কোনো ডাটা খুঁজে পাওয়া যায়নি। প্রথমে Push Local Data চাপুন।' });
+      }
+      return res.status(500).json({ error: 'Supabase থেকে ডাটা পুল করতে ব্যর্থ হয়েছে: ' + error.message });
+    }
+
+    if (data && data.data) {
+      db.update((draft) => {
+        db.setRaw(data.data);
+      });
+      return res.json({ success: true, message: 'সরাসরি সফলভাবে Supabase Cloud থেকে লেটেস্ট ডাটা পুল করা হয়েছে এবং লোকালি সেভ করা হয়েছে!' });
+    }
+
+    res.status(400).json({ error: 'Supabase থেকে অকার্যকর ডাটা পাওয়া গেছে।' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'ব্যতিক্রমী ত্রুটি: ' + err.message });
+  }
+});
+
 // ================= VITE MIDDLEWARE SETUP =================
 
 async function startServer() {
