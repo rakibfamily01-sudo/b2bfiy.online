@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
-import { db, hashPassword, isSupabaseConfigured, supabase } from './server/db.ts';
+import { db, hashPassword, isSupabaseConfigured, supabase, syncFromSupabase, saveToSupabaseIndividual } from './server/db.ts';
 
 const app = express();
 const PORT = 3000;
@@ -23,21 +23,33 @@ app.use('/uploads', express.static(UPLOADS_DIR));
 app.use(async (req, res, next) => {
   if (isSupabaseConfigured && supabase) {
     try {
-      const { data, error } = await supabase
-        .from('site_config')
-        .select('data')
-        .eq('id', 1)
-        .single();
-      
-      if (!error && data && data.data) {
-        db.setRaw(data.data);
-      } else if (error) {
-        // If it's a row not found error (PGRST116), seed it with local data!
-        if (error.code === 'PGRST116') {
-          console.log('Row with id=1 not found. Seeding Supabase with default local data...');
-          await supabase.from('site_config').upsert({ id: 1, data: db.get() });
-        } else {
-          console.error('Supabase fetch error in middleware:', error.message);
+      // 1. Try to load from separate, individual structured tables in Supabase
+      const individualData = await syncFromSupabase();
+      if (individualData) {
+        db.setRaw(individualData);
+      } else {
+        // 2. Fallback to the single site_config JSONB column if individual tables don't exist yet
+        const { data, error } = await supabase
+          .from('site_config')
+          .select('data')
+          .eq('id', 1)
+          .single();
+        
+        if (!error && data && data.data) {
+          db.setRaw(data.data);
+          
+          // Background sync to seed individual tables if the user just created them
+          saveToSupabaseIndividual(data.data).catch(() => {});
+        } else if (error) {
+          // If it's a row not found error (PGRST116), seed it with local data!
+          if (error.code === 'PGRST116') {
+            console.log('Row with id=1 not found. Seeding Supabase with default local data...');
+            const localData = db.get();
+            await supabase.from('site_config').upsert({ id: 1, data: localData });
+            saveToSupabaseIndividual(localData).catch(() => {});
+          } else {
+            console.error('Supabase fetch error in middleware:', error.message);
+          }
         }
       }
     } catch (err) {
