@@ -1,51 +1,11 @@
 <!doctype html>
-<html lang="bn">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <script>
-      // Suppress benign WebSocket or Vite HMR connection errors in the sandboxed preview environment
-      window.addEventListener('unhandledrejection', function (event) {
-        const reasonStr = event.reason ? String(event.reason.message || event.reason) : '';
-        if (reasonStr.toLowerCase().includes('websocket') || reasonStr.toLowerCase().includes('hmr')) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      });
-      window.addEventListener('error', function (event) {
-        const msgStr = event.message || '';
-        if (msgStr.toLowerCase().includes('websocket') || msgStr.toLowerCase().includes('hmr')) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      }, true);
-    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>B2Bfiy Institute | Premium Digital Agency</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <style>
-      /* Smooth scroll behavior */
-      html {
-        scroll-behavior: smooth;
-      }
-      /* Custom high-end agency scrollbar */
-      ::-webkit-scrollbar {
-        width: 8px;
-      }
-      ::-webkit-scrollbar-track {
-        background: #090a0f;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #252836;
-        border-radius: 4px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #4f46e5;
-      }
-    </style>
+    <title>My Google AI Studio App</title>
   </head>
-  <body class="bg-[#030408] text-gray-100 antialiased overflow-x-hidden selection:bg-indigo-500 selection:text-white">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

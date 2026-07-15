@@ -1,134 +1,213 @@
+/**
+ * B2bfiy Type Definitions
+ */
+
 export interface SiteSettings {
-  site_name: string;
-  logo_url: string;
-  favicon_url: string;
-  hero_title: string;
-  hero_subtitle: string;
-  hero_cta_text: string;
-  whatsapp_number: string;
-  footer_text: string;
-  footer_address: string;
-  footer_email: string;
-  logo_display_mode?: string; // 'graphic' | 'text' | 'both'
-  seo_description?: string;
-  seo_keywords?: string;
-  og_title?: string;
-  og_description?: string;
-  og_image_url?: string;
-  stat_projects_value?: number;
-  stat_projects_label?: string;
-  stat_clients_value?: number;
-  stat_clients_label?: string;
-  stat_experience_value?: number;
-  stat_experience_label?: string;
-  stat_success_value?: number;
-  stat_success_label?: string;
-  social_links: {
-    facebook: string;
-    instagram: string;
-    linkedin: string;
-    youtube: string;
-  };
+  name: string;
+  logo: string;
+  logoText?: string;
+  logoDisplayType?: 'logo' | 'text' | 'both';
+  favicon: string;
+  phone: string;
+  email: string;
+  whatsapp: string;
+  address: string;
+  facebook: string;
+  instagram: string;
+  linkedin: string;
+  youtube: string;
+  defaultSeoTitle: string;
+  defaultMetaDescription: string;
+  googleAnalyticsId: string;
+  facebookPixelId: string;
+  enableTopBar: boolean;
+  enableStickyHeader: boolean;
+  viewAllGraphicsDesignUrl?: string;
 }
 
-export interface Service {
+export interface NavigationItem {
   id: string;
-  title: string;
-  icon: string;
-  short_description: string;
-  cover_image_url: string;
-  order_index: number;
-  is_active: boolean;
-  created_at: string;
+  label: string;
+  url: string;
+  order: number;
 }
 
-export interface ServiceDetail {
-  id: string;
-  service_id: string;
-  title: string;
+export interface HeroContent {
+  badge: string;
+  heading: string;
+  highlightText: string;
   description: string;
-  order_index: number;
+  primaryCtaText: string;
+  primaryCtaUrl: string;
+  secondaryCtaText: string;
+  secondaryCtaUrl: string;
+  trustText: string;
+  imagePath: string;
+  isVisible: boolean;
+}
+
+export interface StatisticCard {
+  id: string;
+  label: string;
+  value: string;
+  iconName: string;
+  order: number;
 }
 
 export interface ClientLogo {
   id: string;
-  company_name: string;
-  logo_url: string;
-  order_index: number;
-  is_active: boolean;
+  name: string;
+  url: string;
+  imagePath: string;
+  order: number;
+  published: boolean;
 }
 
-export interface VideoCategory {
+export interface ServiceCard {
+  id: string;
+  title: string;
+  description: string;
+  features: string[];
+  iconName: string;
+  order: number;
+  published: boolean;
+}
+
+export interface WhyChooseUsItem {
+  id: string;
+  title: string;
+  description: string;
+  iconName: string;
+  order: number;
+}
+
+export interface PortfolioCategory {
   id: string;
   name: string;
   slug: string;
-  order_index: number;
-  is_active: boolean;
 }
 
-export interface VideoPortfolio {
+export interface PortfolioProject {
   id: string;
-  category_id: string;
+  slug: string;
   title: string;
-  thumbnail_url: string;
-  video_url: string;
-  order_index: number;
-  is_active: boolean;
-  created_at: string;
+  clientName: string;
+  categoryId: string;
+  serviceType: string;
+  thumbnail: string;
+  images: string[];
+  videoUrl: string;
+  websiteUrl: string;
+  date: string;
+  description: string;
+  challenge: string;
+  solution: string;
+  process: string;
+  result: string;
+  technologies: string[];
+  tags: string[];
+  featured: boolean;
+  published: boolean;
 }
 
-export interface GraphicsPortfolio {
+export interface WorkProcessStep {
   id: string;
-  image_url: string;
+  stepNumber: string;
   title: string;
-  order_index: number;
-  is_active: boolean;
+  description: string;
+  order: number;
+  published: boolean;
 }
 
-export interface GraphicsSettings {
-  view_all_link: string;
-}
-
-export interface WebPortfolio {
-  id: string;
-  title: string;
-  image_url: string;
-  demo_link: string;
-  order_index: number;
-  is_active: boolean;
-}
-
-export interface Review {
-  id: string;
-  client_name: string;
-  client_photo_url: string;
-  designation: string;
-  rating: number;
-  review_text: string;
-  order_index: number;
-  is_active: boolean;
-}
-
-export interface ContactSubmission {
+export interface PricingPackage {
   id: string;
   name: string;
-  email: string;
-  phone: string;
-  service_interested: string;
-  message: string;
-  created_at: string;
-  is_read: boolean;
+  type: 'monthly' | 'website' | 'graphic' | 'video' | 'bundle';
+  price: string;
+  currency: string;
+  period: string; // e.g., "Month" or "One-time"
+  features: string[];
+  mostPopular: boolean;
+  order: number;
+  deliveryTime?: string;
+  published: boolean;
 }
 
-export interface SiteData {
-  site_settings: SiteSettings;
-  services: Service[];
-  service_details: ServiceDetail[];
+export interface Testimonial {
+  id: string;
+  name: string;
+  company: string;
+  review: string;
+  rating: number;
+  photoPath: string;
+  order: number;
+  published: boolean;
+}
+
+export interface FAQItem {
+  id: string;
+  question: string;
+  answer: string;
+  order: number;
+  published: boolean;
+}
+
+export interface AuditRequest {
+  id: string;
+  fullName: string;
+  businessName: string;
+  email: string;
+  whatsapp: string;
+  websiteUrl: string;
+  serviceNeeded: string;
+  message: string;
+  status: 'new' | 'contacted' | 'qualified' | 'meeting' | 'client' | 'closed';
+  notes: string;
+  createdAt: string;
+}
+
+export interface ContactMessage {
+  id: string;
+  fullName: string;
+  email: string;
+  subject: string;
+  message: string;
+  status: 'unread' | 'read' | 'archived';
+  notes: string;
+  createdAt: string;
+}
+
+export interface MediaItem {
+  id: string;
+  fileName: string;
+  fileUrl: string;
+  fileSize: number;
+  mimeType: string;
+  uploadedAt: string;
+}
+
+export interface AdminProfile {
+  email: string;
+  passwordHash: string;
+  salt: string;
+}
+
+export interface DatabaseState {
+  settings: SiteSettings;
+  navigation_items: NavigationItem[];
+  hero_content: HeroContent;
+  statistics: StatisticCard[];
   client_logos: ClientLogo[];
-  video_categories: VideoCategory[];
-  video_portfolio: VideoPortfolio[];
-  graphics_portfolio: GraphicsPortfolio[];
-  graphics_settings: GraphicsSettings;
-  web_portfolio: WebPortfolio[];
-  reviews: Review[];
+  services: ServiceCard[];
+  why_choose_us: WhyChooseUsItem[];
+  portfolio_categories: PortfolioCategory[];
+  portfolio_projects: PortfolioProject[];
+  work_process: WorkProcessStep[];
+  packages: PricingPackage[];
+  testimonials: Testimonial[];
+  faqs: FAQItem[];
+  audit_requests: AuditRequest[];
+  contact_messages: ContactMessage[];
+  media: MediaItem[];
+  admin: AdminProfile;
 }
